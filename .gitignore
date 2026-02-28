@@ -1,0 +1,33 @@
+##################################
+# Unity (Vehiclesimulator)
+##################################
+
+Vehiclesimulator/[Ll]ibrary/
+Vehiclesimulator/[Tt]emp/
+Vehiclesimulator/[Oo]bj/
+Vehiclesimulator/[Bb]uild/
+Vehiclesimulator/[Bb]uilds/
+Vehiclesimulator/[Ll]ogs/
+Vehiclesimulator/[Uu]ser[Ss]ettings/
+Vehiclesimulator/[Mm]emoryCaptures/
+Vehiclesimulator/[Rr]ecordings/
+
+##################################
+# .NET / WPF / Server
+##################################
+
+**/bin/
+**/obj/
+.vs/
+
+*.user
+*.suo
+*.userprefs
+*.pdb
+
+##################################
+# OS
+##################################
+
+.DS_Store
+Thumbs.db
