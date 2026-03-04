@@ -31,6 +31,7 @@ namespace AirGuard.WPF.Views
         {
             _vm.Dispose();
             base.OnClosing(e);
+            Application.Current.Shutdown();
         }
 
         // ===== 지도 인터랙션 =====

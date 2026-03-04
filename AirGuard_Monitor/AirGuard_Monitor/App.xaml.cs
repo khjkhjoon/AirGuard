@@ -1,25 +1,33 @@
-﻿using AirGuard.WPF.Views;
+﻿using AirGuard.WPF.Services;
+using AirGuard.WPF.Views;
 using System.Windows;
 
 namespace AirGuard.WPF
 {
     public partial class App : Application
     {
+        public static DatabaseService Database { get; private set; } = null!;
+        public static UserRecord? CurrentUser { get; set; }
+
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
 
-            DispatcherUnhandledException += (s, ex) =>
-            {
-                System.IO.File.AppendAllText(
-                    System.IO.Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
-                        "airguard_error.txt"),
-                    $"[{System.DateTime.Now}] UI 예외: {ex.Exception.Message}\n{ex.Exception.StackTrace}\n\n");
-                ex.Handled = true;
-            };
+            Database = new DatabaseService();
 
-            new MainWindow().Show();
+            var login = new LoginWindow(Database);
+            bool? result = login.ShowDialog();
+
+            if (result == true && login.LoggedInUser != null)
+            {
+                CurrentUser = login.LoggedInUser;
+                var main = new MainWindow();
+                main.Show();
+            }
+            else
+            {
+                Shutdown();
+            }
         }
     }
 }

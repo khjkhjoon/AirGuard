@@ -20,17 +20,17 @@ namespace AirGuard.WPF.ViewModels
     public class MainViewModel : BaseViewModel, IDisposable
     {
         private readonly TcpClientService _tcpService = new();
+        private readonly DatabaseService _db = App.Database;
         private readonly DispatcherTimer _clockTimer;
         private readonly DispatcherTimer _uiTimer;
         private readonly DispatcherTimer _flashTimer;
 
-        // ===== 백그라운드 버퍼 (스레드 세이프) =====
-        // 수신 스레드는 여기만 씀. UI 갱신은 _uiTimer만 담당.
+        // ===== 백그라운드 버퍼 =====
         private readonly ConcurrentDictionary<string, VehicleData> _latestData = new();
         private readonly ConcurrentQueue<(string type, string title, string msg, string unitId)> _pendingAlerts = new();
         private readonly ConcurrentQueue<(string level, string msg)> _pendingLogs = new();
 
-        // ===== 연결 상태 =====
+        // ===== 연결 =====
         private string _serverAddress = "127.0.0.1";
         private string _serverPort = "9000";
         private string _statusText = "OFFLINE";
@@ -38,22 +38,21 @@ namespace AirGuard.WPF.ViewModels
         private bool _isDisconnecting;
 
         // ===== 지도 =====
-        private double _mapOffsetX = 0;
-        private double _mapOffsetY = 0;
+        private double _mapOffsetX;
+        private double _mapOffsetY;
         private double _mapScale = 1.0;
-        private double _mapCursorLat = 0;
-        private double _mapCursorLon = 0;
+        private double _mapCursorLat;
+        private double _mapCursorLon;
         private AirGuard.WPF.Map.MapRenderer? _mapRenderer;
-        public void SetMapRenderer(AirGuard.WPF.Map.MapRenderer renderer)
-    => _mapRenderer = renderer;
+        public void SetMapRenderer(AirGuard.WPF.Map.MapRenderer r) => _mapRenderer = r;
 
         // ===== 통계 =====
-        private int _totalReceived = 0;
-        private int _receivedThisSecond = 0;
-        private int _uiTickCount = 0;
+        private int _totalReceived;
+        private int _receivedThisSecond;
+        private int _uiTickCount;
         private string _dataRate = "0 msg/s";
 
-        // ===== 필터/검색 =====
+        // ===== 필터 =====
         private string _searchQuery = "";
         private string _selectedFilter = "ALL";
 
@@ -64,21 +63,21 @@ namespace AirGuard.WPF.ViewModels
         private string _currentTime = "";
         private string _currentDate = "";
 
-        // ===== 긴급 플래시 =====
-        private bool _isFlashing = false;
-        private int _flashCount = 0;
+        // ===== 플래시 =====
+        private bool _isFlashing;
+        private int _flashCount;
         private Brush _flashBrush = new SolidColorBrush(Colors.Transparent);
 
         // ===== CSV =====
         private StreamWriter? _csvWriter;
         private string _csvPath = "";
-        private bool _isCsvLogging = false;
+        private bool _isCsvLogging;
         private string _csvStatus = "CSV LOG: OFF";
 
         // ===== 세션 =====
         private DateTime _sessionStart = DateTime.Now;
 
-        // ===== 컬렉션 (UI 스레드 전용) =====
+        // ===== 컬렉션 =====
         public ObservableCollection<VehicleViewModel> Vehicles { get; } = new();
         public ObservableCollection<AlertEntry> Alerts { get; } = new();
         public ObservableCollection<LogEntry> LogEntries { get; } = new();
@@ -86,7 +85,6 @@ namespace AirGuard.WPF.ViewModels
         public ObservableCollection<string> FilterOptions { get; } = new()
             { "ALL", "ACTIVE", "IDLE", "EMERGENCY" };
 
-        // VehicleId → ViewModel 빠른 조회용
         private readonly Dictionary<string, VehicleViewModel> _vehicleMap = new();
 
         // ===== 이벤트 =====
@@ -120,6 +118,11 @@ namespace AirGuard.WPF.ViewModels
 
         public string CurrentTime { get => _currentTime; private set => SetProperty(ref _currentTime, value); }
         public string CurrentDate { get => _currentDate; private set => SetProperty(ref _currentDate, value); }
+
+        // 로그인 사용자 정보
+        public string CurrentUserText =>
+            $"{App.CurrentUser?.Name}  [{App.CurrentUser?.Role?.ToUpper()}]";
+        public bool CanEdit => App.CurrentUser?.IsOperator == true;
 
         public string SearchQuery
         {
@@ -184,8 +187,6 @@ namespace AirGuard.WPF.ViewModels
         {
             _clockTimer = new DispatcherTimer(DispatcherPriority.Background);
             _flashTimer = new DispatcherTimer(DispatcherPriority.Normal);
-
-            // UI 갱신 전담 타이머: 200ms마다 버퍼 읽어서 반영
             _uiTimer = new DispatcherTimer(DispatcherPriority.Background)
             {
                 Interval = TimeSpan.FromMilliseconds(200)
@@ -249,9 +250,10 @@ namespace AirGuard.WPF.ViewModels
             InitQuickStats();
             _uiTimer.Start();
             _pendingLogs.Enqueue(("INFO", "AirGuard 관제 시스템 시작됨"));
+            _pendingLogs.Enqueue(("OK", $"로그인: {App.CurrentUser?.Name} ({App.CurrentUser?.Role})"));
         }
 
-        // ===== UI 타이머 (200ms) — 버퍼 → UI 반영 =====
+        // ===== UI 타이머 (200ms) =====
         private void OnUiTick(object? sender, EventArgs e)
         {
             _uiTickCount++;
@@ -266,7 +268,6 @@ namespace AirGuard.WPF.ViewModels
                 {
                     vm.UpdateFrom(data);
                     UpdateDroneMapPosition(vm);
-
                     if (_selectedVehicle?.VehicleId == data.VehicleId)
                         vm.UpdateTelemetry(data);
                 }
@@ -296,7 +297,7 @@ namespace AirGuard.WPF.ViewModels
             while (_pendingLogs.TryDequeue(out var log))
                 AddLogInternal(log.level, log.msg);
 
-            // 4) 1초마다 (5틱) 숫자형 UI 갱신
+            // 4) 1초마다 (5틱) — 숫자 UI + DB 저장
             if (_uiTickCount % 5 == 0)
             {
                 _dataRate = $"{_receivedThisSecond} msg/s";
@@ -305,19 +306,26 @@ namespace AirGuard.WPF.ViewModels
                 OnPropertyChanged(nameof(TotalReceived));
                 OnPropertyChanged(nameof(LastUpdateText));
                 OnPropertyChanged(nameof(VehicleCountText));
+
+                // 비행 로그 DB 저장 (1초마다)
+                foreach (var v in Vehicles)
+                {
+                    _db.SaveFlightLog(v.VehicleId, v.Name,
+                        v.Latitude, v.Longitude, v.Altitude,
+                        v.Speed, v.Battery, v.Status, v.Heading);
+                }
             }
 
             if (needStats) UpdateQuickStats();
         }
 
-        // ===== 데이터 수신 (백그라운드 스레드 — UI 절대 건드리지 않음) =====
+        // ===== 수신 =====
         private void OnMessageReceived(string json)
         {
-            _pendingLogs.Enqueue(("INFO", $"수신 길이:{json.Length} / {json.Substring(0, Math.Min(80, json.Length))}"));
             try
             {
-                // type 필드로 맵/드론 데이터 구분
-                if (json.Contains("\"type\":\"map\"") || json.Contains("type") && json.Contains("map") && json.Contains("originX"))
+                if (json.Contains("\"type\":\"map\"") ||
+                   (json.Contains("originX") && json.Contains("objects")))
                 {
                     Application.Current?.Dispatcher.BeginInvoke(() =>
                         MapDataReceived?.Invoke(json));
@@ -331,7 +339,6 @@ namespace AirGuard.WPF.ViewModels
                 System.Threading.Interlocked.Increment(ref _totalReceived);
                 System.Threading.Interlocked.Increment(ref _receivedThisSecond);
 
-                // 상태 변화 감지 후 알림 큐에만 넣기
                 if (_latestData.TryGetValue(data.VehicleId, out var prev))
                 {
                     if (!prev.Status.Equals(data.Status, StringComparison.OrdinalIgnoreCase))
@@ -351,10 +358,8 @@ namespace AirGuard.WPF.ViewModels
                     _pendingAlerts.Enqueue(("INFO", "NEW UNIT", $"{data.Name} 관제 구역 진입", data.VehicleId));
                 }
 
-                // 최신 데이터 저장 (UI 타이머가 200ms마다 읽어감)
                 _latestData[data.VehicleId] = data;
 
-                // CSV 기록
                 if (_isCsvLogging && _csvWriter != null)
                 {
                     try
@@ -368,10 +373,7 @@ namespace AirGuard.WPF.ViewModels
                     catch { }
                 }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"수신 오류: {ex.Message}");
-            }
+            catch { }
         }
 
         // ===== 연결 =====
@@ -384,7 +386,7 @@ namespace AirGuard.WPF.ViewModels
                 IsConnected = true;
                 _isDisconnecting = false;
                 StatusText = $"ONLINE  {ServerAddress}:{ServerPort}";
-                AddLogInternal("OK", $"연결 성공");
+                AddLogInternal("OK", "연결 성공");
             }
             catch (Exception ex)
             {
@@ -431,8 +433,6 @@ namespace AirGuard.WPF.ViewModels
                 vm.UpdateMapXY(cx, cy);
                 return;
             }
-
-            // 맵 없으면 위도/경도 기준 상대 좌표로 표시
             if (Vehicles.Count == 0) return;
             var first = Vehicles[0];
             double scale = 5000.0 * _mapScale;
@@ -464,7 +464,7 @@ namespace AirGuard.WPF.ViewModels
             foreach (var v in Vehicles) UpdateDroneMapPosition(v);
         }
 
-        // ===== 필터 (IsVisible 프로퍼티로 처리) =====
+        // ===== 필터 =====
         private void ApplyFilter()
         {
             var query = _searchQuery?.ToLower().Trim() ?? "";
@@ -473,11 +473,13 @@ namespace AirGuard.WPF.ViewModels
             {
                 v.IsVisible =
                     (filter == "ALL" || v.Status.Equals(filter, StringComparison.OrdinalIgnoreCase)) &&
-                    (string.IsNullOrEmpty(query) || v.Name.ToLower().Contains(query) || v.VehicleId.ToLower().Contains(query));
+                    (string.IsNullOrEmpty(query) ||
+                     v.Name.ToLower().Contains(query) ||
+                     v.VehicleId.ToLower().Contains(query));
             }
         }
 
-        // ===== 긴급 플래시 =====
+        // ===== 플래시 =====
         private void TriggerEmergencyFlash()
         {
             _flashCount = 0; _isFlashing = true;
@@ -538,14 +540,16 @@ namespace AirGuard.WPF.ViewModels
                     $"airguard_alerts_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
                 using var w = new StreamWriter(path, false, Encoding.UTF8);
                 w.WriteLine("Time,Title,Message,UnitId");
-                foreach (var a in Alerts) w.WriteLine($"{a.Time},{a.Title},{a.Message},{a.UnitId}");
+                foreach (var a in Alerts)
+                    w.WriteLine($"{a.Time},{a.Title},{a.Message},{a.UnitId}");
                 AddLogInternal("OK", $"알림 내보내기: {path}");
-                MessageBox.Show($"저장됨:\n{path}", "알림 내보내기", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show($"저장됨:\n{path}", "알림 내보내기",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex) { AddLogInternal("ERR", $"내보내기 실패: {ex.Message}"); }
         }
 
-        // ===== 알림/로그 (UI 스레드 전용) =====
+        // ===== 알림/로그 =====
         private void AddAlertInternal(string title, string msg, string unitId, AlertSeverity severity)
         {
             var color = severity switch
@@ -566,6 +570,9 @@ namespace AirGuard.WPF.ViewModels
             OnPropertyChanged(nameof(HasAlerts));
             OnPropertyChanged(nameof(AlertCount));
             OnPropertyChanged(nameof(AlertBadgeVisibility));
+
+            // DB 저장
+            _db.SaveAlert(title, msg, unitId, severity.ToString());
         }
 
         private void AddLogInternal(string level, string message)
