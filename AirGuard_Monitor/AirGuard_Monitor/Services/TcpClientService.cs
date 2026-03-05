@@ -63,26 +63,26 @@ namespace AirGuard.WPF.Services
             {
                 while (_isConnected && _stream != null)
                 {
-                    // 4바이트 길이 읽기
                     byte[] lenBuf = new byte[4];
                     if (!await ReadExactAsync(lenBuf, 4)) break;
                     int msgLen = BitConverter.ToInt32(lenBuf, 0);
                     if (msgLen <= 0 || msgLen > 10 * 1024 * 1024) break;
-
-                    // 본문 읽기
                     byte[] body = new byte[msgLen];
                     if (!await ReadExactAsync(body, msgLen)) break;
-
                     string msg = Encoding.UTF8.GetString(body);
                     MessageReceived?.Invoke(msg);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                ErrorOccurred?.Invoke($"수신 오류: {ex.GetType().Name} - {ex.Message}");
+            }
             finally
             {
                 if (_isConnected)
                 {
                     _isConnected = false;
+                    ErrorOccurred?.Invoke("수신 루프 종료됨");
                     Disconnected?.Invoke();
                 }
             }

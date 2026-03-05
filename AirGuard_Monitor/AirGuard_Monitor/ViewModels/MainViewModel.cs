@@ -297,7 +297,7 @@ namespace AirGuard.WPF.ViewModels
             while (_pendingLogs.TryDequeue(out var log))
                 AddLogInternal(log.level, log.msg);
 
-            // 4) 1초마다 (5틱) — 숫자 UI + DB 저장
+            // 4) 1초마다 (5틱) — 숫자 UI 갱신
             if (_uiTickCount % 5 == 0)
             {
                 _dataRate = $"{_receivedThisSecond} msg/s";
@@ -306,14 +306,27 @@ namespace AirGuard.WPF.ViewModels
                 OnPropertyChanged(nameof(TotalReceived));
                 OnPropertyChanged(nameof(LastUpdateText));
                 OnPropertyChanged(nameof(VehicleCountText));
+            }
 
-                // 비행 로그 DB 저장 (1초마다)
-                foreach (var v in Vehicles)
+            // 5초마다 (25틱) — DB 비행 로그 저장
+            if (_uiTickCount % 25 == 0)
+            {
+                var snapshot = Vehicles.ToList();
+                _ = Task.Run(() =>
                 {
-                    _db.SaveFlightLog(v.VehicleId, v.Name,
-                        v.Latitude, v.Longitude, v.Altitude,
-                        v.Speed, v.Battery, v.Status, v.Heading);
-                }
+                    foreach (var v in snapshot)
+                    {
+                        _db.SaveFlightLog(v.VehicleId, v.Name,
+                            v.Latitude, v.Longitude, v.Altitude,
+                            v.Speed, v.Battery, v.Status, v.Heading);
+                    }
+                });
+            }
+
+            // 1시간마다 (18000틱) — 오래된 로그 정리
+            if (_uiTickCount % 18000 == 0)
+            {
+                _ = Task.Run(() => _db.CleanupOldLogs(30));
             }
 
             if (needStats) UpdateQuickStats();

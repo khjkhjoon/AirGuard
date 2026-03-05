@@ -13,7 +13,21 @@ namespace AirGuard.WPF
         {
             base.OnStartup(e);
 
-            Database = new DatabaseService();
+            AppDomain.CurrentDomain.UnhandledException += (s, ex) =>
+    MessageBox.Show($"오류: {ex.ExceptionObject}", "Fatal Error");
+            DispatcherUnhandledException += (s, ex) =>
+            {
+                MessageBox.Show($"UI 오류: {ex.Exception.Message}", "Error");
+                ex.Handled = true;
+            };
+
+            Database = new DatabaseService(
+                host: "localhost",
+                port: 3306,
+                database: "airguard",
+                user: "root",
+                password: "khjoon"
+            );
 
             var login = new LoginWindow(Database);
             bool? result = login.ShowDialog();

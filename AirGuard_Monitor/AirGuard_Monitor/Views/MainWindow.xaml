@@ -470,7 +470,6 @@
                             Foreground="{StaticResource TextMuted}"
                             HorizontalAlignment="Right" />
                     </StackPanel>
-
                     <!-- 세션 시간 -->
                     <StackPanel
                         Grid.Column="4"
@@ -480,6 +479,11 @@
                             Text="{Binding SessionDuration}"
                             FontSize="8"
                             Foreground="{StaticResource TextMuted}"
+                            HorizontalAlignment="Right" />
+                        <TextBlock
+                            Text="{Binding CurrentUserText}"
+                            FontSize="8"
+                            Foreground="#7A9BB5"
                             HorizontalAlignment="Right" />
                     </StackPanel>
 
@@ -1084,14 +1088,18 @@
                                                         <ColumnDefinition
                                                             Width="36" />
                                                     </Grid.ColumnDefinitions>
-                                                    <ProgressBar
-                                                        Value="{Binding Battery}"
-                                                        Maximum="100"
+                                                    <Border
                                                         Height="6"
                                                         Background="#1A2535"
-                                                        Foreground="{Binding BatteryColor}"
-                                                        BorderThickness="0"
-                                                        VerticalAlignment="Center" />
+                                                        CornerRadius="1"
+                                                        VerticalAlignment="Center">
+                                                        <Border
+                                                            Height="6"
+                                                            HorizontalAlignment="Left"
+                                                            Background="{Binding BatteryColor}"
+                                                            CornerRadius="1"
+                                                            Width="{Binding BatteryBarWidth}" />
+                                                    </Border>
                                                     <TextBlock
                                                         Grid.Column="1"
                                                         Text="{Binding Battery, StringFormat={}{0:F0}%}"
