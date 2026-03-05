@@ -1,4 +1,5 @@
 ﻿using AirGuard.WPF.Models;
+using OxyPlot;
 using AirGuard.WPF.Services;
 using System;
 using System.Collections.Concurrent;
@@ -87,7 +88,11 @@ namespace AirGuard.WPF.ViewModels
 
         private readonly Dictionary<string, VehicleViewModel> _vehicleMap = new();
 
-        // ===== 이벤트 =====
+        // ===== 그래프 =====
+        public TelemetryGraphViewModel TelemetryGraph { get; } = new();
+
+        // ===== 이벤트 ====="
+
         public event Action<string>? MapDataReceived;
 
         // ===== 프로퍼티 =====
@@ -146,6 +151,11 @@ namespace AirGuard.WPF.ViewModels
                 OnPropertyChanged(nameof(HasSelectedVehicle));
                 OnPropertyChanged(nameof(SelectedVehicleVisibility));
                 OnPropertyChanged(nameof(NoSelectionVisibility));
+                // 그래프 소스 교체
+                if (_selectedVehicle != null)
+                    TelemetryGraph.UpdateData(_selectedVehicle.TelemetryHistory);
+                else
+                    TelemetryGraph.Clear();
             }
         }
         public bool HasSelectedVehicle => _selectedVehicle != null;
@@ -269,7 +279,10 @@ namespace AirGuard.WPF.ViewModels
                     vm.UpdateFrom(data);
                     UpdateDroneMapPosition(vm);
                     if (_selectedVehicle?.VehicleId == data.VehicleId)
+                    {
                         vm.UpdateTelemetry(data);
+                        TelemetryGraph.UpdateData(vm.TelemetryHistory);
+                    }
                 }
                 else
                 {
