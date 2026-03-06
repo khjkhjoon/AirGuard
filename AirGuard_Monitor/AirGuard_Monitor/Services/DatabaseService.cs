@@ -52,6 +52,7 @@ namespace AirGuard.WPF.Services
 
                 CREATE TABLE IF NOT EXISTS flight_logs (
                     id          INT AUTO_INCREMENT PRIMARY KEY,
+                    session_id  INT,
                     vehicle_id  VARCHAR(50)  NOT NULL,
                     name        VARCHAR(100) NOT NULL,
                     latitude    DOUBLE,
@@ -74,6 +75,16 @@ namespace AirGuard.WPF.Services
                     severity    VARCHAR(20)  NOT NULL,
                     occurred_at DATETIME     NOT NULL,
                     INDEX idx_time (occurred_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    vehicle_id   VARCHAR(50)  NOT NULL,
+                    started_at   DATETIME     NOT NULL,
+                    ended_at     DATETIME,
+                    note         VARCHAR(100),
+                    INDEX idx_vehicle (vehicle_id),
+                    INDEX idx_time    (started_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
                 CREATE TABLE IF NOT EXISTS missions (
@@ -222,7 +233,8 @@ namespace AirGuard.WPF.Services
         // ===== 비행 로그 =====
         public void SaveFlightLog(string vehicleId, string name,
             double lat, double lon, double alt,
-            double speed, double battery, string status, double heading)
+            double speed, double battery, string status, double heading,
+            int sessionId = -1)
         {
             try
             {
@@ -231,11 +243,12 @@ namespace AirGuard.WPF.Services
                 var cmd = conn.CreateCommand();
                 cmd.CommandText = @"
                     INSERT INTO flight_logs
-                        (vehicle_id, name, latitude, longitude, altitude,
+                        (session_id, vehicle_id, name, latitude, longitude, altitude,
                          speed, battery, status, heading, recorded_at)
                     VALUES
-                        (@vid, @name, @lat, @lon, @alt,
+                        (@sid, @vid, @name, @lat, @lon, @alt,
                          @spd, @bat, @stat, @hdg, @now)";
+                cmd.Parameters.AddWithValue("@sid", sessionId > 0 ? (object)sessionId : DBNull.Value);
                 cmd.Parameters.AddWithValue("@vid", vehicleId);
                 cmd.Parameters.AddWithValue("@name", name);
                 cmd.Parameters.AddWithValue("@lat", lat);
@@ -305,6 +318,171 @@ namespace AirGuard.WPF.Services
             catch { }
         }
 
+        // ===== 세션 관리 =====
+        public int StartSession(string vehicleId)
+        {
+            try
+            {
+                using var conn = new MySqlConnection(_connectionString);
+                conn.Open();
+                var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+                    INSERT INTO sessions (vehicle_id, started_at)
+                    VALUES (@vid, @now);
+                    SELECT LAST_INSERT_ID();";
+                cmd.Parameters.AddWithValue("@vid", vehicleId);
+                cmd.Parameters.AddWithValue("@now", DateTime.Now);
+                return Convert.ToInt32(cmd.ExecuteScalar());
+            }
+            catch { return -1; }
+        }
+
+        public void EndSession(int sessionId)
+        {
+            try
+            {
+                using var conn = new MySqlConnection(_connectionString);
+                conn.Open();
+                var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+                    UPDATE sessions SET ended_at = @now WHERE id = @id";
+                cmd.Parameters.AddWithValue("@now", DateTime.Now);
+                cmd.Parameters.AddWithValue("@id", sessionId);
+                cmd.ExecuteNonQuery();
+            }
+            catch { }
+        }
+
+        public List<SessionRecord> GetSessionsByDate(string vehicleId, DateTime date)
+        {
+            var list = new List<SessionRecord>();
+            try
+            {
+                using var conn = new MySqlConnection(_connectionString);
+                conn.Open();
+                var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+                    SELECT s.id, s.started_at, s.ended_at,
+                           COUNT(f.id) as log_count
+                    FROM sessions s
+                    LEFT JOIN flight_logs f ON f.session_id = s.id
+                    WHERE s.vehicle_id = @vid
+                      AND DATE(s.started_at) = @date
+                    GROUP BY s.id
+                    ORDER BY s.started_at ASC";
+                cmd.Parameters.AddWithValue("@vid", vehicleId);
+                cmd.Parameters.AddWithValue("@date", date.ToString("yyyy-MM-dd"));
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    list.Add(new SessionRecord
+                    {
+                        Id = reader.GetInt32(0),
+                        StartedAt = reader.GetDateTime(1),
+                        EndedAt = reader.IsDBNull(2) ? (DateTime?)null : reader.GetDateTime(2),
+                        LogCount = reader.GetInt32(3)
+                    });
+                }
+            }
+            catch { }
+            return list;
+        }
+
+        // ===== 날짜별 조회 =====
+        public List<DateTime> GetFlightDates(string vehicleId)
+        {
+            var dates = new List<DateTime>();
+            try
+            {
+                using var conn = new MySqlConnection(_connectionString);
+                conn.Open();
+                var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+                    SELECT DISTINCT DATE(recorded_at) as flight_date
+                    FROM flight_logs
+                    WHERE vehicle_id = @vid
+                    ORDER BY flight_date DESC";
+                cmd.Parameters.AddWithValue("@vid", vehicleId);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                    dates.Add(reader.GetDateTime(0));
+            }
+            catch { }
+            return dates;
+        }
+
+        public List<FlightLogRecord> GetFlightLogsByDate(string vehicleId, DateTime date)
+        {
+            var list = new List<FlightLogRecord>();
+            try
+            {
+                using var conn = new MySqlConnection(_connectionString);
+                conn.Open();
+                var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+                    SELECT latitude, longitude, altitude, speed, battery,
+                           status, heading, recorded_at
+                    FROM flight_logs
+                    WHERE vehicle_id = @vid
+                      AND DATE(recorded_at) = @date
+                    ORDER BY recorded_at ASC";
+                cmd.Parameters.AddWithValue("@vid", vehicleId);
+                cmd.Parameters.AddWithValue("@date", date.ToString("yyyy-MM-dd"));
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    list.Add(new FlightLogRecord
+                    {
+                        Latitude = reader.GetDouble(0),
+                        Longitude = reader.GetDouble(1),
+                        Altitude = reader.GetDouble(2),
+                        Speed = reader.GetDouble(3),
+                        Battery = reader.GetDouble(4),
+                        Status = reader.GetString(5),
+                        Heading = reader.GetDouble(6),
+                        RecordedAt = reader.GetDateTime(7)
+                    });
+                }
+            }
+            catch { }
+            return list;
+        }
+
+        public List<FlightLogRecord> GetFlightLogsBySession(int sessionId)
+        {
+            var list = new List<FlightLogRecord>();
+            try
+            {
+                using var conn = new MySqlConnection(_connectionString);
+                conn.Open();
+                var cmd = conn.CreateCommand();
+                cmd.CommandText = @"
+                    SELECT latitude, longitude, altitude, speed, battery,
+                           status, heading, recorded_at
+                    FROM flight_logs
+                    WHERE session_id = @sid
+                    ORDER BY recorded_at ASC";
+                cmd.Parameters.AddWithValue("@sid", sessionId);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    list.Add(new FlightLogRecord
+                    {
+                        Latitude = reader.GetDouble(0),
+                        Longitude = reader.GetDouble(1),
+                        Altitude = reader.GetDouble(2),
+                        Speed = reader.GetDouble(3),
+                        Battery = reader.GetDouble(4),
+                        Status = reader.GetString(5),
+                        Heading = reader.GetDouble(6),
+                        RecordedAt = reader.GetDateTime(7)
+                    });
+                }
+            }
+            catch { }
+            return list;
+        }
+
         // ===== 오래된 데이터 정리 =====
         public void CleanupOldLogs(int keepDays = 30)
         {
@@ -358,6 +536,18 @@ namespace AirGuard.WPF.Services
         public bool IsAdmin => Role == "Admin";
         public bool IsOperator => Role == "Admin" || Role == "Operator";
         public bool IsViewer => true;
+    }
+
+    public class SessionRecord
+    {
+        public int Id { get; set; }
+        public DateTime StartedAt { get; set; }
+        public DateTime? EndedAt { get; set; }
+        public int LogCount { get; set; }
+
+        public string Label => EndedAt.HasValue
+            ? $"{StartedAt:HH:mm} ~ {EndedAt:HH:mm}  ({LogCount}개)"
+            : $"{StartedAt:HH:mm} ~ 진행중  ({LogCount}개)";
     }
 
     public class FlightLogRecord

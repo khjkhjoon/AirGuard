@@ -1,4 +1,5 @@
 ﻿using AirGuard.WPF.Models;
+using OxyPlot;
 using AirGuard.WPF.Services;
 using System;
 using System.Collections.Concurrent;
@@ -68,11 +69,17 @@ namespace AirGuard.WPF.ViewModels
         private int _flashCount;
         private Brush _flashBrush = new SolidColorBrush(Colors.Transparent);
 
+        // ===== 세션 =====
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _vehicleSessions = new();
+
         // ===== CSV =====
         private StreamWriter? _csvWriter;
         private string _csvPath = "";
         private bool _isCsvLogging;
         private string _csvStatus = "CSV LOG: OFF";
+
+        // ===== 그래프 =====
+        public TelemetryGraphViewModel TelemetryGraph { get; } = new();
 
         // ===== 세션 =====
         private DateTime _sessionStart = DateTime.Now;
@@ -87,7 +94,8 @@ namespace AirGuard.WPF.ViewModels
 
         private readonly Dictionary<string, VehicleViewModel> _vehicleMap = new();
 
-        // ===== 이벤트 =====
+        // ===== 이벤트 ====="
+
         public event Action<string>? MapDataReceived;
 
         // ===== 프로퍼티 =====
@@ -146,6 +154,11 @@ namespace AirGuard.WPF.ViewModels
                 OnPropertyChanged(nameof(HasSelectedVehicle));
                 OnPropertyChanged(nameof(SelectedVehicleVisibility));
                 OnPropertyChanged(nameof(NoSelectionVisibility));
+                // 그래프 소스 교체
+                if (_selectedVehicle != null)
+                    TelemetryGraph.UpdateData(_selectedVehicle.TelemetryHistory);
+                else
+                    TelemetryGraph.Clear();
             }
         }
         public bool HasSelectedVehicle => _selectedVehicle != null;
@@ -269,7 +282,10 @@ namespace AirGuard.WPF.ViewModels
                     vm.UpdateFrom(data);
                     UpdateDroneMapPosition(vm);
                     if (_selectedVehicle?.VehicleId == data.VehicleId)
+                    {
                         vm.UpdateTelemetry(data);
+                        TelemetryGraph.UpdateData(vm.TelemetryHistory);
+                    }
                 }
                 else
                 {
@@ -278,6 +294,9 @@ namespace AirGuard.WPF.ViewModels
                     Vehicles.Add(vm);
                     UpdateDroneMapPosition(vm);
                     ApplyFilter();
+                    // 새 드론 등록 시 세션 시작
+                    int sid = _db.StartSession(data.VehicleId);
+                    _vehicleSessions[data.VehicleId] = sid;
                 }
                 needStats = true;
             }
@@ -316,9 +335,10 @@ namespace AirGuard.WPF.ViewModels
                 {
                     foreach (var v in snapshot)
                     {
+                        _vehicleSessions.TryGetValue(v.VehicleId, out int sid);
                         _db.SaveFlightLog(v.VehicleId, v.Name,
                             v.Latitude, v.Longitude, v.Altitude,
-                            v.Speed, v.Battery, v.Status, v.Heading);
+                            v.Speed, v.Battery, v.Status, v.Heading, sid);
                     }
                 });
             }
@@ -419,12 +439,14 @@ namespace AirGuard.WPF.ViewModels
             IsConnected = false;
             StatusText = "OFFLINE";
             AddLogInternal("WARN", "연결 해제됨");
+            EndAllSessions();
             _isDisconnecting = false;
         }
 
         private void OnDisconnected()
         {
             if (_isDisconnecting) return;
+            EndAllSessions();
             Application.Current?.Dispatcher.BeginInvoke(() =>
             {
                 IsConnected = false;
@@ -432,6 +454,13 @@ namespace AirGuard.WPF.ViewModels
             });
             _pendingLogs.Enqueue(("WARN", "서버 연결 끊김"));
             _pendingAlerts.Enqueue(("WARN", "DISCONNECTED", "서버 연결이 끊어졌습니다", "SYSTEM"));
+        }
+
+        private void EndAllSessions()
+        {
+            foreach (var kv in _vehicleSessions)
+                _ = Task.Run(() => _db.EndSession(kv.Value));
+            _vehicleSessions.Clear();
         }
 
         private void OnErrorOccurred(string message)
