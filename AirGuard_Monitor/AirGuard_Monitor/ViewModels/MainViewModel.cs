@@ -15,6 +15,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using AirGuard.WPF.Map;
 
 namespace AirGuard.WPF.ViewModels
 {
@@ -45,8 +46,11 @@ namespace AirGuard.WPF.ViewModels
         private double _mapCursorLat;
         private double _mapCursorLon;
         private AirGuard.WPF.Map.MapRenderer? _mapRenderer;
-        public void SetMapRenderer(AirGuard.WPF.Map.MapRenderer r) => _mapRenderer = r;
-
+        public void SetMapRenderer(MapRenderer r)
+        {
+            _mapRenderer = r;
+            Playback.SetMapRenderer(r);
+        }
         // ===== 통계 =====
         private int _totalReceived;
         private int _receivedThisSecond;
@@ -80,6 +84,9 @@ namespace AirGuard.WPF.ViewModels
 
         // ===== 그래프 =====
         public TelemetryGraphViewModel TelemetryGraph { get; } = new();
+
+        // ===== 플레이백 =====
+        public PlaybackViewModel Playback { get; }
 
         // ===== 세션 =====
         private DateTime _sessionStart = DateTime.Now;
@@ -156,9 +163,14 @@ namespace AirGuard.WPF.ViewModels
                 OnPropertyChanged(nameof(NoSelectionVisibility));
                 // 그래프 소스 교체
                 if (_selectedVehicle != null)
+                {
                     TelemetryGraph.UpdateData(_selectedVehicle.TelemetryHistory);
+                    _ = Playback.LoadRecordsAsync(_selectedVehicle.VehicleId, _selectedVehicle.Name);
+                }
                 else
+                {
                     TelemetryGraph.Clear();
+                }
             }
         }
         public bool HasSelectedVehicle => _selectedVehicle != null;
@@ -198,6 +210,8 @@ namespace AirGuard.WPF.ViewModels
         // ===== 생성자 =====
         public MainViewModel()
         {
+            Playback = new PlaybackViewModel(_db);
+
             _clockTimer = new DispatcherTimer(DispatcherPriority.Background);
             _flashTimer = new DispatcherTimer(DispatcherPriority.Normal);
             _uiTimer = new DispatcherTimer(DispatcherPriority.Background)
@@ -666,6 +680,7 @@ namespace AirGuard.WPF.ViewModels
             _flashTimer.Stop();
             StopCsvLogging();
             _tcpService.Dispose();
+            Playback.Dispose();
         }
     }
 
