@@ -51,6 +51,7 @@ namespace AirGuard.WPF.ViewModels
             _mapRenderer = r;
             Playback.SetMapRenderer(r);
         }
+
         // ===== 통계 =====
         private int _totalReceived;
         private int _receivedThisSecond;
@@ -82,13 +83,7 @@ namespace AirGuard.WPF.ViewModels
         private bool _isCsvLogging;
         private string _csvStatus = "CSV LOG: OFF";
 
-        // ===== 그래프 =====
-        public TelemetryGraphViewModel TelemetryGraph { get; } = new();
-
-        // ===== 플레이백 =====
-        public PlaybackViewModel Playback { get; }
-
-        // ===== 세션 =====
+        // ===== 세션 시작 시각 =====
         private DateTime _sessionStart = DateTime.Now;
 
         // ===== 컬렉션 =====
@@ -101,9 +96,16 @@ namespace AirGuard.WPF.ViewModels
 
         private readonly Dictionary<string, VehicleViewModel> _vehicleMap = new();
 
-        // ===== 이벤트 ====="
+        // ===== 그래프 =====
+        public TelemetryGraphViewModel TelemetryGraph { get; } = new();
 
+        // ===== 플레이백 =====
+        public PlaybackViewModel Playback { get; }
+
+        // ===== 이벤트 =====
         public event Action<string>? MapDataReceived;
+        // vehicleId, name, lat, lon, alt, status
+        public event Action<string, string, double, double, double, string>? DronePositionUpdated;
 
         // ===== 프로퍼티 =====
         public string ServerAddress { get => _serverAddress; set => SetProperty(ref _serverAddress, value); }
@@ -134,7 +136,6 @@ namespace AirGuard.WPF.ViewModels
         public string CurrentTime { get => _currentTime; private set => SetProperty(ref _currentTime, value); }
         public string CurrentDate { get => _currentDate; private set => SetProperty(ref _currentDate, value); }
 
-        // 로그인 사용자 정보
         public string CurrentUserText =>
             $"{App.CurrentUser?.Name}  [{App.CurrentUser?.Role?.ToUpper()}]";
         public bool CanEdit => App.CurrentUser?.IsOperator == true;
@@ -161,16 +162,13 @@ namespace AirGuard.WPF.ViewModels
                 OnPropertyChanged(nameof(HasSelectedVehicle));
                 OnPropertyChanged(nameof(SelectedVehicleVisibility));
                 OnPropertyChanged(nameof(NoSelectionVisibility));
-                // 그래프 소스 교체
                 if (_selectedVehicle != null)
                 {
                     TelemetryGraph.UpdateData(_selectedVehicle.TelemetryHistory);
                     _ = Playback.LoadRecordsAsync(_selectedVehicle.VehicleId, _selectedVehicle.Name);
                 }
                 else
-                {
                     TelemetryGraph.Clear();
-                }
             }
         }
         public bool HasSelectedVehicle => _selectedVehicle != null;
@@ -359,9 +357,7 @@ namespace AirGuard.WPF.ViewModels
 
             // 1시간마다 (18000틱) — 오래된 로그 정리
             if (_uiTickCount % 18000 == 0)
-            {
                 _ = Task.Run(() => _db.CleanupOldLogs(30));
-            }
 
             if (needStats) UpdateQuickStats();
         }
@@ -485,16 +481,19 @@ namespace AirGuard.WPF.ViewModels
         {
             if (_mapRenderer != null && _mapRenderer.IsMapLoaded)
             {
+                // WorldToCanvas 내부에 _panOffsetX/Y 포함 → 별도 오프셋 불필요
                 var (cx, cy) = _mapRenderer.WorldToCanvas(vm.Longitude, vm.Latitude);
                 vm.UpdateMapXY(cx, cy);
-                return;
             }
-            if (Vehicles.Count == 0) return;
-            var first = Vehicles[0];
-            double scale = 5000.0 * _mapScale;
-            vm.UpdateMapXY(
-                400 + (vm.Longitude - first.Longitude) * scale + _mapOffsetX,
-                250 - (vm.Latitude - first.Latitude) * scale + _mapOffsetY);
+            else if (Vehicles.Count > 0)
+            {
+                var first = Vehicles[0];
+                double scale = 5000.0 * _mapScale;
+                vm.UpdateMapXY(
+                    400 + (vm.Longitude - first.Longitude) * scale + _mapOffsetX,
+                    250 - (vm.Latitude - first.Latitude) * scale + _mapOffsetY);
+            }
+            DronePositionUpdated?.Invoke(vm.VehicleId, vm.Name, vm.Latitude, vm.Longitude, vm.Altitude, vm.Status);
         }
 
         public void UpdateMapCoordinate(System.Windows.Point pos)
@@ -509,7 +508,17 @@ namespace AirGuard.WPF.ViewModels
 
         public void PanMap(double dx, double dy)
         {
-            _mapOffsetX += dx; _mapOffsetY += dy;
+            if (_mapRenderer != null && _mapRenderer.IsMapLoaded)
+            {
+                // 맵 로드 시: MapRenderer가 오브젝트 이동 + WorldToCanvas 오프셋 관리
+                _mapRenderer.Pan(dx, dy);
+            }
+            else
+            {
+                // 맵 미로드 시: 기존 오프셋 방식
+                _mapOffsetX += dx;
+                _mapOffsetY += dy;
+            }
             foreach (var v in Vehicles) UpdateDroneMapPosition(v);
         }
 
@@ -518,6 +527,16 @@ namespace AirGuard.WPF.ViewModels
             _mapScale = Math.Max(0.1, Math.Min(50.0, _mapScale * factor));
             OnPropertyChanged(nameof(MapZoomText));
             foreach (var v in Vehicles) UpdateDroneMapPosition(v);
+        }
+
+        /// <summary>
+        /// 선택된 드론의 현재 캔버스 픽셀 좌표를 반환합니다.
+        /// MainWindow.CenterOnDrone_Click 에서 호출.
+        /// </summary>
+        public System.Windows.Point? GetSelectedDroneCanvasPos()
+        {
+            if (_selectedVehicle == null) return null;
+            return new System.Windows.Point(_selectedVehicle.MapX, _selectedVehicle.MapY);
         }
 
         // ===== 필터 =====
@@ -626,8 +645,6 @@ namespace AirGuard.WPF.ViewModels
             OnPropertyChanged(nameof(HasAlerts));
             OnPropertyChanged(nameof(AlertCount));
             OnPropertyChanged(nameof(AlertBadgeVisibility));
-
-            // DB 저장
             _db.SaveAlert(title, msg, unitId, severity.ToString());
         }
 

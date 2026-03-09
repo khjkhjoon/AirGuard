@@ -4,30 +4,14 @@ using AirGuard.Network;
 
 namespace AirGuard.Data
 {
-    /// <summary>
-    /// WPF에서 MAP_REQUEST 수신 시 맵 데이터 전송
-    /// </summary>
     public class MapDataSender : MonoBehaviour
     {
         [SerializeField] private NetworkManager networkManager;
-
         private static readonly string[] MapTags = { "Building", "Nature", "Road", "Prop", "Vehicle" };
 
-        private void Awake()
-        {
-            networkManager = GetComponent<NetworkManager>();
-        }
-
-        private void Start()
-        {
-            // NetworkManager의 OnDataReceived 이벤트 구독
-            NetworkManager.OnCommandReceived += OnCommandReceived;
-        }
-
-        private void OnDestroy()
-        {
-            NetworkManager.OnCommandReceived -= OnCommandReceived;
-        }
+        private void Awake() { networkManager = GetComponent<NetworkManager>(); }
+        private void Start() { NetworkManager.OnCommandReceived += OnCommandReceived; }
+        private void OnDestroy() { NetworkManager.OnCommandReceived -= OnCommandReceived; }
 
         private void OnCommandReceived(string command)
         {
@@ -49,24 +33,49 @@ namespace AirGuard.Data
                 {
                     var renderer = go.GetComponent<Renderer>();
                     if (renderer == null) continue;
-
                     if (tag == "Prop" || tag == "Vehicle") continue;
 
                     var bounds = renderer.bounds;
+
+                    float sx, sy, sh;
+                    float fx, fz, rx, rz;
+
+                    if (tag == "Road" || tag == "Nature")
+                    {
+                        var t = go.transform;
+                        // 크기는 bounds XZ 그대로 사용
+                        sx = bounds.size.x;
+                        sy = bounds.size.z;
+                        sh = 0f;
+                        // 방향 벡터만 추가 (부모 회전 포함한 실제 월드 방향)
+                        rx = t.right.x; rz = t.right.z;
+                        fx = t.forward.x; fz = t.forward.z;
+                    }
+                    else
+                    {
+                        sx = bounds.size.x;
+                        sy = bounds.size.z;
+                        sh = bounds.size.y;
+                        fx = 0; fz = 1; rx = 1; rz = 0;
+                    }
                     objects.Add(new MapObjectData
                     {
                         tag = tag,
                         x = go.transform.position.x,
                         y = go.transform.position.z,
                         h = go.transform.position.y,
-                        sx = bounds.size.x,
-                        sy = bounds.size.z,
-                        rot = go.transform.eulerAngles.y
+                        sh = sh,
+                        sx = sx,
+                        sy = sy,
+                        rot = go.transform.eulerAngles.y,
+                        fx = fx,
+                        fz = fz,
+                        rx = rx,
+                        rz = rz,
                     });
                 }
             }
 
-            // 맵 범위 계산
             float minX = float.MaxValue, maxX = float.MinValue;
             float minY = float.MaxValue, maxY = float.MinValue;
             foreach (var o in objects)
@@ -98,8 +107,12 @@ namespace AirGuard.Data
     {
         public string tag;
         public float x, y, h;
+        public float sh;
         public float sx, sy;
         public float rot;
+        // 월드 forward/right 방향 (부모 회전 포함한 실제 방향)
+        public float fx, fz;  // 오브젝트 forward 방향 XZ
+        public float rx, rz;  // 오브젝트 right 방향 XZ
     }
 
     [System.Serializable]
