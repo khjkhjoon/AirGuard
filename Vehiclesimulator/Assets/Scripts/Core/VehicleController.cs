@@ -28,6 +28,7 @@ namespace AirGuard.Core
         private VehicleStatusManager _statusManager;
         private NetworkManager _networkManager;
         private VehicleUIController _uiController;
+        private DronePhysicsSystem _physicsSystem;
 
         private VehicleData _vehicleData;
 
@@ -89,16 +90,17 @@ namespace AirGuard.Core
                     _networkManager.ConnectionStatus
                     );
             }
-        }   
+        }
         private void SendDataToServer()
         {
+            float wind = _physicsSystem != null ? _physicsSystem.WindSpeed : 0f;
             _vehicleData.UpdateFromTransform(
                 transform,
                 _movementController.CurrentSpeed,
                 _batterySystem.BatteryPercentage,
-                _statusManager.CurrentStatus
-                );
-
+                _statusManager.CurrentStatus,
+                wind
+            );
             _networkManager.SendVehicleData(_vehicleData);
         }
 

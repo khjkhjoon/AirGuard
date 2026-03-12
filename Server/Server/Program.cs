@@ -37,7 +37,7 @@ namespace AirGuard.Server
             _isRunning = true;
             _tcpListener = new TcpListener(IPAddress.Any, TCP_PORT);
             _tcpListener.Start();
-            Console.WriteLine($"✅ TCP 서버 시작: 포트 {TCP_PORT}");
+            Console.WriteLine($"TCP 서버 시작: 포트 {TCP_PORT}");
             _ = Task.Run(AcceptTcpClientsAsync);
             Console.WriteLine("대기 중...");
             await Task.Delay(-1);
@@ -58,12 +58,12 @@ namespace AirGuard.Server
                 try
                 {
                     var client = await _tcpListener.AcceptTcpClientAsync();
-                    Console.WriteLine($"📱 연결: {client.Client.RemoteEndPoint}");
+                    Console.WriteLine($"연결: {client.Client.RemoteEndPoint}");
                     _ = Task.Run(() => HandleClientAsync(client));
                 }
                 catch (Exception ex)
                 {
-                    if (_isRunning) Console.WriteLine($"❌ 수락 오류: {ex.Message}");
+                    if (_isRunning) Console.WriteLine($"수락 오류: {ex.Message}");
                 }
             }
         }
@@ -83,18 +83,18 @@ namespace AirGuard.Server
                 {
                     isWpf = true;
                     lock (_wpfClients) _wpfClients.Add(client);
-                    Console.WriteLine($"🖥️  WPF 등록 (총 {_wpfClients.Count}개)");
+                    Console.WriteLine($"WPF 등록 (총 {_wpfClients.Count}개)");
                 }
                 else
                 {
                     lock (_unityClients) _unityClients.Add(client);
-                    Console.WriteLine($"🎮 Unity 등록 (총 {_unityClients.Count}개)");
+                    Console.WriteLine($"Unity 등록 (총 {_unityClients.Count}개)");
 
                     if (_mapRequested)
                     {
                         await Task.Delay(300);
                         await SendMessageAsync(stream, "MAP_REQUEST");
-                        Console.WriteLine("📨 Unity → MAP_REQUEST 전달");
+                        Console.WriteLine("Unity → MAP_REQUEST 전달");
                     }
 
                     // 유니티 첫 메시지 처리
@@ -109,7 +109,7 @@ namespace AirGuard.Server
 
                     if (isWpf)
                     {
-                        Console.WriteLine($"📨 WPF 명령: {msg}");
+                        Console.WriteLine($"WPF 명령: {msg}");
                         if (msg.Trim() == "MAP_REQUEST") _mapRequested = true;
                         ForwardToUnity(msg);
                     }
@@ -121,19 +121,19 @@ namespace AirGuard.Server
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ 오류: {ex.Message}");
+                Console.WriteLine($"오류: {ex.Message}");
             }
             finally
             {
                 if (isWpf)
                 {
                     lock (_wpfClients) _wpfClients.Remove(client);
-                    Console.WriteLine($"🖥️  WPF 해제");
+                    Console.WriteLine($"WPF 해제");
                 }
                 else
                 {
                     lock (_unityClients) _unityClients.Remove(client);
-                    Console.WriteLine($"🎮 Unity 해제");
+                    Console.WriteLine($"Unity 해제");
                 }
                 client.Close();
             }
@@ -143,7 +143,7 @@ namespace AirGuard.Server
         {
             if (msg.Contains("\"type\":\"map\"") || msg.Contains("originX"))
             {
-                Console.WriteLine($"🗺️  맵 데이터 → WPF ({msg.Length}바이트)");
+                Console.WriteLine($"맵 데이터 → WPF ({msg.Length}바이트)");
             }
             else
             {
@@ -238,6 +238,8 @@ namespace AirGuard.Server
         public double Speed { get; set; }
         public double Battery { get; set; }
         public string Status { get; set; } = "Idle";
+        public double WindSpeed { get; set; }
+        public string WindAlert { get; set; } = "CALM";
         public DateTime Timestamp { get; set; } = DateTime.Now;
     }
 }

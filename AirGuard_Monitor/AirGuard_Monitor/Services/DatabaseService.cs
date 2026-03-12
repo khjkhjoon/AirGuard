@@ -6,9 +6,16 @@ using System.Text;
 
 namespace AirGuard.WPF.Services
 {
+    /// <summary>
+    /// MySQL 데이터베이스 연결 및 사용자, 비행로그, 알림, 세션 데이터를 관리하는 서비스
+    /// </summary>
     public class DatabaseService
     {
-        private readonly string _connectionString;
+        private readonly string _connectionString; // DB 연결 문자열
+
+        /// <summary>
+        /// 데이터베이스 서비스 생성 및 초기화
+        /// </summary>
 
         public DatabaseService(string host = "localhost", int port = 3306,
             string database = "airguard", string user = "root", string password = "")
@@ -21,6 +28,10 @@ namespace AirGuard.WPF.Services
         }
 
         // ===== 초기화 =====
+
+        /// <summary>
+        /// 데이터베이스 및 기본 테이블 생성
+        /// </summary>
         private void InitializeDatabase()
         {
             // DB가 없으면 먼저 생성

@@ -20,6 +20,7 @@ namespace AirGuard.Network
         [Header("Transmission Settings")]
         [SerializeField] private float sendInterval = 0.1f;
 
+        private readonly System.Threading.SemaphoreSlim _sendLock = new System.Threading.SemaphoreSlim(1, 1);
         private INetworkClient _tcpClient;
         private INetworkClient _udpClient;
         private float _lastSendTime;
@@ -69,28 +70,14 @@ namespace AirGuard.Network
 
         public async void SendVehicleData(VehicleData data)
         {
-            if (Time.time - _lastSendTime < sendInterval)
-                return;
-
+            if (Time.time - _lastSendTime < sendInterval) return;
             _lastSendTime = Time.time;
-
-            string json = data.ToJson();
-
-            if (useTCP && _tcpClient?.IsConnected == true)
-            {
-                await _tcpClient.SendAsync(json);
-            }
-
-            if (useUDP && _udpClient?.IsConnected == true)
-            {
-                await _udpClient.SendAsync(json);
-            }
+            await SendLockedAsync(data.ToJson());
         }
 
         public async void SendRawData(string json)
         {
-            if (useTCP && _tcpClient?.IsConnected == true)
-                await _tcpClient.SendAsync(json);
+            await SendLockedAsync(json);
         }
 
         private void OnStatusChanged(string status)
@@ -108,6 +95,22 @@ namespace AirGuard.Network
         private void OnError(System.Exception ex)
         {
             Debug.LogError($"[Network] Error: {ex.Message}");
+        }
+
+        private async System.Threading.Tasks.Task SendLockedAsync(string json)
+        {
+            await _sendLock.WaitAsync();
+            try
+            {
+                if (useTCP && _tcpClient?.IsConnected == true)
+                    await _tcpClient.SendAsync(json);
+                if (useUDP && _udpClient?.IsConnected == true)
+                    await _udpClient.SendAsync(json);
+            }
+            finally
+            {
+                _sendLock.Release();
+            }
         }
 
         private void OnDestroy()

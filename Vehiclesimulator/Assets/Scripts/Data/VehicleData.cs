@@ -19,6 +19,8 @@ namespace AirGuard.Data
         public string Status;
         public double Heading;
         public string Timestamp;
+        public double WindSpeed;
+        public string WindAlert;
 
         public VehicleData(string id, string name)
         {
@@ -34,7 +36,8 @@ namespace AirGuard.Data
             Timestamp = DateTime.Now.ToString("o");
         }
 
-        public void UpdateFromTransform(Transform transform, float speed, float battery, VehicleStatus status)
+        public void UpdateFromTransform(Transform transform, float speed,
+    float battery, VehicleStatus status, float windSpeed = 0f)
         {
             // Unity 좌표 → 위도/경도 변환 (서울 기준)
             //const double BASE_LATITUDE = 37.5665;
@@ -54,6 +57,9 @@ namespace AirGuard.Data
             Status = status.ToString();
             Heading = transform.eulerAngles.y;
             Timestamp = DateTime.Now.ToString("o");
+
+            WindSpeed = windSpeed;
+            WindAlert = windSpeed < 3f ? "CALM" : windSpeed < 6f ? "MODERATE" : "TURBULENCE";
         }
 
         public string ToJson()

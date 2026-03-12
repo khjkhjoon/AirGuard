@@ -1,94 +1,138 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace AirGuard.Controllers
 {
     /// <summary>
-    /// ���� �̵� ����
-    /// WASD: �����¿�, Space: ���, Shift: �ϰ�
+    /// 물리 기반 드론 이동 컨트롤러
+    /// - Rigidbody 기반 추력/토크
+    /// - RC 드론 스타일: 기울기로 이동, 호버링
+    /// - WASD: 전후좌우 기울기, Space: 상승, Shift: 하강, Q/E: 좌우 회전(Yaw)
     /// </summary>
+    [RequireComponent(typeof(Rigidbody))]
     public class VehicleMovementController : MonoBehaviour
     {
-        [Header("Movement Settings")]
-        [SerializeField] private float moveSpeed = 10f;
-        [SerializeField] private float rotationSpeed = 100f;
-        [SerializeField] private bool allowVerticalMovement = true;
+        [Header("추력 설정")]
+        [SerializeField] private float hoverThrust = 9.81f;
+        [SerializeField] private float maxThrust = 25f;
+        [SerializeField] private float thrustSensitivity = 8f;
 
-        private Vector3 _lastPosition;
-        private float _currentSpeed;
+        [Header("기울기(틸트) 설정")]
+        [SerializeField] private float maxTiltAngle = 28f;
+        [SerializeField] private float tiltSpeed = 4f;
+        [SerializeField] private float moveForce = 18f;
 
-        public float CurrentSpeed => _currentSpeed;
+        [Header("Yaw 설정")]
+        [SerializeField] private float yawSpeed = 90f;
+
+        [Header("안정화")]
+        [SerializeField] private float angularDrag = 4f;
+        [SerializeField] private float linearDrag = 1.2f;
+        [SerializeField] private float autoLevelSpeed = 5f;
+
+        // ─── 내부 상태 ───
+        private Rigidbody _rb;
+        private float _thrustInput = 0f;
+        private float _currentThrust = 0f;
+        private Vector2 _tiltTarget = Vector2.zero;
+        private float _yawInput = 0f;
+        private bool _engineOn = true;
+
+        // ─── 공개 속성 ───
+        public float CurrentSpeed { get; private set; }
         public bool IsMoving { get; private set; }
+        public bool EngineOn => _engineOn;
+        public float CurrentThrust => _currentThrust;
+        public float MaxThrust => maxThrust;
 
-        private void Start()
+        // 미션 실행 중 수동 조작 비활성화
+        public bool ExternalControl { get; set; } = false;
+
+        private void Awake()
         {
-            _lastPosition = transform.position;
+            _rb = GetComponent<Rigidbody>();
+            _rb.useGravity = true;
+            _rb.mass = 1.5f;
+            _rb.linearDamping = linearDrag;
+            _rb.angularDamping = angularDrag;
+            _rb.interpolation = RigidbodyInterpolation.Interpolate;
+            _rb.constraints = RigidbodyConstraints.None;
         }
 
         private void Update()
         {
-            HandleMovement();
-            CalculateSpeed();
+            if (ExternalControl) return;
+            ReadInput();
         }
 
-        private void HandleMovement()
+        private void FixedUpdate()
         {
-            float horizontal = Input.GetAxis("Horizontal");
-            float vertical = Input.GetAxis("Vertical");
-
-            IsMoving = false;
-
-            // �����¿� �̵�
-            if (horizontal != 0 || vertical != 0)
-            {
-                Vector3 movement = new Vector3(horizontal, 0, vertical).normalized * moveSpeed * Time.deltaTime;
-                transform.Translate(movement, Space.World);
-
-                // �̵� �������� ȸ��
-                if (movement != Vector3.zero)
-                {
-                    Quaternion targetRotation = Quaternion.LookRotation(movement);
-                    transform.rotation = Quaternion.Slerp(
-                        transform.rotation,
-                        targetRotation,
-                        rotationSpeed * Time.deltaTime
-                    );
-                }
-
-                IsMoving = true;
-            }
-
-            // ���� �̵� (��п�)
-            if (allowVerticalMovement)
-            {
-                if (Input.GetKey(KeyCode.Space))
-                {
-                    transform.Translate(Vector3.up * moveSpeed * Time.deltaTime, Space.World);
-                    IsMoving = true;
-                }
-
-                if (Input.GetKey(KeyCode.LeftShift))
-                {
-                    transform.Translate(Vector3.down * moveSpeed * Time.deltaTime, Space.World);
-                    IsMoving = true;
-                }
-            }
+            if (ExternalControl) return;
+            ApplyThrust();
+            ApplyTilt();
+            ApplyYaw();
+            AutoLevel();
+            UpdateSpeed();
         }
 
-        private void CalculateSpeed()
+        private void ReadInput()
         {
-            float distance = Vector3.Distance(transform.position, _lastPosition);
-            _currentSpeed = (distance / Time.deltaTime) * 3.6f; // m/s �� km/h
-            _lastPosition = transform.position;
+            _thrustInput = 0f;
+            if (Input.GetKey(KeyCode.Space)) _thrustInput = 1f;
+            if (Input.GetKey(KeyCode.LeftShift)) _thrustInput = -1f;
+
+            float pitch = Input.GetAxis("Vertical");
+            float roll = Input.GetAxis("Horizontal");
+            _tiltTarget = new Vector2(pitch, roll);
+
+            _yawInput = 0f;
+            if (Input.GetKey(KeyCode.Q)) _yawInput = -1f;
+            if (Input.GetKey(KeyCode.E)) _yawInput = 1f;
         }
 
-        public void SetMoveSpeed(float speed)
+        private void ApplyThrust()
         {
-            moveSpeed = speed;
+            if (!_engineOn) return;
+            float targetThrust = hoverThrust + _thrustInput * (maxThrust - hoverThrust);
+            _currentThrust = Mathf.Lerp(_currentThrust, targetThrust, thrustSensitivity * Time.fixedDeltaTime);
+            _rb.AddForce(transform.up * _currentThrust, ForceMode.Force);
         }
 
-        public void SetRotationSpeed(float speed)
+        private void ApplyTilt()
         {
-            rotationSpeed = speed;
+            if (!_engineOn) return;
+            if (_tiltTarget.magnitude < 0.01f) return;
+            Vector3 force = (transform.forward * _tiltTarget.x + transform.right * _tiltTarget.y) * moveForce;
+            _rb.AddForce(force, ForceMode.Force);
+        }
+
+        private void ApplyYaw()
+        {
+            if (_yawInput == 0f) return;
+            _rb.AddTorque(Vector3.up * _yawInput * yawSpeed * Time.fixedDeltaTime, ForceMode.VelocityChange);
+        }
+
+        private void AutoLevel()
+        {
+            if (_tiltTarget.magnitude > 0.05f) return;
+            Quaternion currentRot = transform.rotation;
+            Quaternion targetRot = Quaternion.Euler(0f, currentRot.eulerAngles.y, 0f);
+            transform.rotation = Quaternion.Slerp(currentRot, targetRot, autoLevelSpeed * Time.fixedDeltaTime);
+        }
+
+        private void UpdateSpeed()
+        {
+            CurrentSpeed = _rb.linearVelocity.magnitude * 3.6f;
+            IsMoving = CurrentSpeed > 0.5f;
+        }
+
+        public void SetEngineOn(bool on) => _engineOn = on;
+        public void SetMoveSpeed(float s) => moveForce = s;
+        public void SetRotationSpeed(float s) => yawSpeed = s;
+
+        public void MoveToward(Vector3 target, float speed)
+        {
+            _rb.MovePosition(Vector3.MoveTowards(
+                _rb.position, target, speed * Time.fixedDeltaTime));
         }
     }
 }

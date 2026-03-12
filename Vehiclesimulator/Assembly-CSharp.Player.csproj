@@ -69,9 +69,11 @@
     <Compile Include="Assets\Scripts\Data\VehicleData.cs" />
     <Compile Include="Assets\Scripts\Core\VehicleController.cs" />
     <Compile Include="Assets\Scripts\Network\TcpNetworkClient.cs" />
+    <Compile Include="Assets\Scripts\Data\MissionReceiver.cs" />
     <Compile Include="Assets\TutorialInfo\Scripts\Readme.cs" />
     <Compile Include="Assets\Scripts\Network\UdpNetworkClient.cs" />
     <Compile Include="Assets\Scripts\Data\MapDataSender.cs" />
+    <Compile Include="Assets\Scripts\Controllers\DronePhysicsSystem.cs" />
     <Compile Include="Assets\Scripts\Controllers\VehicleMovementController.cs" />
   </ItemGroup>
   <ItemGroup>

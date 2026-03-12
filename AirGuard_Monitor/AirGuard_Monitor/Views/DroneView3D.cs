@@ -8,46 +8,60 @@ using System.Windows.Media.Media3D;
 
 namespace AirGuard.WPF.Views
 {
+    /// <summary>
+    /// 3D 뷰포트에서 드론 위치/경로/지형지물을 렌더링하는 클래스
+    /// </summary>
     public class DroneView3D
     {
+        // HelixToolkit 3D 뷰포트 참조
         private readonly HelixViewport3D _viewport;
+        // 드론 ID → 3D 비주얼 목록 매핑
         private readonly Dictionary<string, List<ModelVisual3D>> _droneVisuals = new();
+        // 드론 ID → 경로 포인트 목록 매핑
         private readonly Dictionary<string, List<Point3D>> _dronePaths = new();
+        // 드론 ID → 경로 튜브 비주얼 매핑
         private readonly Dictionary<string, TubeVisual3D> _pathVisuals = new();
+        // 드론 ID → 이름 레이블 비주얼 매핑
         private readonly Dictionary<string, BillboardTextVisual3D> _labelVisuals = new();
+        // 드론 ID → 마지막 위치 매핑
         private readonly Dictionary<string, Point3D> _lastPositions = new();
 
-        // 지형지물 비주얼 (태그별)
+        // 지형지물 비주얼 목록 (태그별)
         private readonly List<ModelVisual3D> _mapVisuals = new();
 
-        // 추적 모드
+        // 카메라 추적 모드 활성 여부
         public bool IsTracking { get; private set; } = true;
+        // 추적 대상 드론 ID (null이면 전체 평균)
         private string? _trackingTarget = null;
 
+        // 드론 좌표 원점 위도 (첫 수신 시 설정)
         private double _originLat = double.NaN;
+        // 드론 좌표 원점 경도 (첫 수신 시 설정)
         private double _originLon = double.NaN;
 
-        // 태그별 3D 색상
+        // 태그별 3D 색상 및 고정 높이 설정
         private static readonly Dictionary<string, (Color fill, double fixedHeight)> TagStyle = new()
         {
-            ["Building"] = (Color.FromRgb(45, 85, 130), -1),    // H 필드 그대로 사용
+            ["Building"] = (Color.FromRgb(45, 85, 130), -1),   // H 필드 그대로 사용
             ["Road"] = (Color.FromRgb(30, 38, 50), 0.3),  // 납작하게
             ["Nature"] = (Color.FromRgb(15, 45, 20), 0.3),  // 낮게, 어둡게
             ["Prop"] = (Color.FromRgb(70, 70, 90), -1),
             ["Vehicle"] = (Color.FromRgb(80, 110, 45), -1),
         };
 
+        // 생성자 - 뷰포트 주입 및 씬 초기화
         public DroneView3D(HelixViewport3D viewport)
         {
             _viewport = viewport;
             SetupScene();
         }
 
+        // 기본 조명/그리드 설정 및 카메라 초기화
         private void SetupScene()
         {
             _viewport.Children.Add(new DefaultLights());
 
-            // 그리드 대폭 확대 — 유니티 월드 스케일에 맞게
+            // 유니티 월드 스케일에 맞게 그리드 대폭 확대
             _viewport.Children.Add(new GridLinesVisual3D
             {
                 Width = 10000,
@@ -60,6 +74,7 @@ namespace AirGuard.WPF.Views
             ResetCamera();
         }
 
+        // 카메라를 기본 위치로 리셋
         private void ResetCamera()
         {
             _viewport.Camera = new PerspectiveCamera
@@ -71,31 +86,24 @@ namespace AirGuard.WPF.Views
             };
         }
 
-        // ===== 맵 원점 설정 (드론 좌표와 동기화) =====
+        // 맵 원점 설정 - 드론 좌표계와 동기화
         public void SetMapOrigin(double centerX, double centerZ)
         {
-            // 맵 로드 시 드론 origin을 맵 중심으로 고정
             _originLat = centerZ;
             _originLon = centerX;
         }
 
-        // ===== 지형지물 로드 =====
-        /// <summary>
-        /// 유니티 맵 JSON 파싱 결과(MapData)를 받아 3D 지형지물을 렌더링합니다.
-        /// MainWindow에서 MapDataReceived 이벤트 시 호출하세요.
-        /// </summary>
+        // 유니티 맵 JSON 파싱 결과를 받아 3D 지형지물 렌더링
         public void LoadMap(MapData mapData)
         {
             foreach (var v in _mapVisuals)
                 _viewport.Children.Remove(v);
             _mapVisuals.Clear();
 
-            // originX/Y는 맵의 최솟값 → 맵 중심으로 변환해서 드론 좌표계와 맞춤
-            // 드론은 첫 수신 위치를 origin으로 쓰므로, 맵도 중심 기준으로 상대좌표 사용
+            // 맵 중심 좌표 계산 (드론 좌표계와 맞춤)
             double mapCenterX = mapData.OriginX + mapData.Width / 2f;
             double mapCenterZ = mapData.OriginY + mapData.Height / 2f;
 
-            // 드론 origin을 맵 중심으로 동기화
             SetMapOrigin(mapCenterX, mapCenterZ);
 
             // 맵 전체가 보이도록 카메라 높이/거리 자동 조정
@@ -109,6 +117,7 @@ namespace AirGuard.WPF.Views
                 FieldOfView = 60
             };
 
+            // 렌더링 순서 (Road → Nature → Prop → Vehicle → Building)
             string[] order = { "Road", "Nature", "Prop", "Vehicle", "Building" };
 
             foreach (var tag in order)
@@ -119,9 +128,9 @@ namespace AirGuard.WPF.Views
                 {
                     if (!obj.Tag.Equals(tag, StringComparison.OrdinalIgnoreCase)) continue;
 
-                    // 유니티 좌표 → 맵 중심 기준 상대좌표
+                    // 유니티 좌표 → 맵 중심 기준 상대좌표 (Z축 반전)
                     double x = (obj.X - mapCenterX);
-                    double z = -(obj.Y - mapCenterZ);   // Z축 반전
+                    double z = -(obj.Y - mapCenterZ);
                     double w = Math.Max(obj.Sx, 0.5);
                     double d = Math.Max(obj.Sy, 0.5);
 
@@ -155,23 +164,18 @@ namespace AirGuard.WPF.Views
                         {
                             Origin = new Point3D(x, 0.05, z),
                             Normal = new Vector3D(0, 1, 0),
-                            // right 방향이 Width, forward 방향이 Length
-                            Width = hasDirVec ? w : w,
-                            Length = hasDirVec ? d : d,
+                            Width = w,
+                            Length = d,
                             Fill = brush,
                         };
 
                         if (hasDirVec)
-                        {
-                            // forward 벡터를 LengthDirection으로 설정 (유니티 Z축 반전)
                             rect.LengthDirection = new Vector3D(obj.Fx, 0, -obj.Fz);
-                        }
                         else if (Math.Abs(obj.Rot) > 0.5)
-                        {
                             rect.Transform = new RotateTransform3D(
                                 new AxisAngleRotation3D(new Vector3D(0, 1, 0), -obj.Rot),
                                 new Point3D(x, 0.05, z));
-                        }
+
                         visual = rect;
                     }
                     else
@@ -187,11 +191,10 @@ namespace AirGuard.WPF.Views
                             Fill = brush,
                         };
                         if (Math.Abs(obj.Rot) > 0.5)
-                        {
                             box.Transform = new RotateTransform3D(
                                 new AxisAngleRotation3D(new Vector3D(0, 1, 0), -obj.Rot),
                                 new Point3D(x, baseY + h / 2.0, z));
-                        }
+
                         visual = box;
                     }
 
@@ -201,19 +204,21 @@ namespace AirGuard.WPF.Views
             }
         }
 
-        // ===== 드론 업데이트 =====
+        // 드론 위치/상태 갱신 - 구체/고도선/레이블/경로 업데이트
         public void UpdateDrone(string vehicleId, string name, double lat, double lon,
                                 double altitude, string status)
         {
             // lat = 유니티 Z, lon = 유니티 X
             if (double.IsNaN(_originLat)) { _originLat = lat; _originLon = lon; }
 
+            // 유니티 좌표 → 3D 상대좌표 변환
             double x = (lon - _originLon);
             double y = altitude;
             double z = -(lat - _originLat);
             var pos = new Point3D(x, y, z);
             _lastPositions[vehicleId] = pos;
 
+            // 상태별 색상
             var color = status switch
             {
                 "Active" => Colors.LimeGreen,
@@ -233,6 +238,7 @@ namespace AirGuard.WPF.Views
                 _labelVisuals.Remove(vehicleId);
             }
 
+            // 드론 구체
             var sphere = new SphereVisual3D
             {
                 Center = pos,
@@ -240,6 +246,7 @@ namespace AirGuard.WPF.Views
                 Fill = new SolidColorBrush(color)
             };
 
+            // 고도선 (드론 → 지면)
             var altLine = new LinesVisual3D
             {
                 Points = new Point3DCollection { pos, new Point3D(pos.X, 0, pos.Z) },
@@ -247,6 +254,7 @@ namespace AirGuard.WPF.Views
                 Thickness = 0.6
             };
 
+            // 이름/고도 레이블
             var label = new BillboardTextVisual3D
             {
                 Text = $"{name}  {altitude:F1}m",
@@ -264,7 +272,7 @@ namespace AirGuard.WPF.Views
             _droneVisuals[vehicleId] = new List<ModelVisual3D> { sphere, altLine };
             _labelVisuals[vehicleId] = label;
 
-            // 경로 누적
+            // 경로 포인트 누적 (최대 400개)
             if (!_dronePaths.ContainsKey(vehicleId))
                 _dronePaths[vehicleId] = new List<Point3D>();
             _dronePaths[vehicleId].Add(pos);
@@ -276,6 +284,7 @@ namespace AirGuard.WPF.Views
             if (IsTracking) TrackDrones();
         }
 
+        // 카메라를 드론 위치로 추적 이동
         private void TrackDrones()
         {
             if (_lastPositions.Count == 0) return;
@@ -285,6 +294,7 @@ namespace AirGuard.WPF.Views
                 center = tp;
             else
             {
+                // 추적 대상 없으면 전체 드론 평균 위치
                 double ax = _lastPositions.Values.Average(p => p.X);
                 double ay = _lastPositions.Values.Average(p => p.Y);
                 double az = _lastPositions.Values.Average(p => p.Z);
@@ -305,6 +315,7 @@ namespace AirGuard.WPF.Views
             }
         }
 
+        // 경로 튜브 비주얼 갱신
         private void RefreshPath(string vehicleId, Color color)
         {
             if (_pathVisuals.TryGetValue(vehicleId, out var old))
@@ -325,6 +336,7 @@ namespace AirGuard.WPF.Views
             _pathVisuals[vehicleId] = tube;
         }
 
+        // 카메라 추적 모드 토글 - 현재 상태 반환
         public bool ToggleTracking()
         {
             IsTracking = !IsTracking;
@@ -332,6 +344,7 @@ namespace AirGuard.WPF.Views
             return IsTracking;
         }
 
+        // 특정 드론으로 추적 대상 고정
         public void SetTrackingTarget(string? vehicleId)
         {
             _trackingTarget = vehicleId;
@@ -339,6 +352,7 @@ namespace AirGuard.WPF.Views
             TrackDrones();
         }
 
+        // 특정 드론 비주얼/경로/레이블 제거
         public void RemoveDrone(string vehicleId)
         {
             if (_droneVisuals.TryGetValue(vehicleId, out var visuals))
@@ -360,6 +374,7 @@ namespace AirGuard.WPF.Views
             _lastPositions.Remove(vehicleId);
         }
 
+        // 전체 드론/경로/지형지물 초기화 및 카메라 리셋
         public void Clear()
         {
             foreach (var list in _droneVisuals.Values)

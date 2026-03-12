@@ -126,6 +126,20 @@ namespace AirGuard.WPF.Map
             return (cx, cy);
         }
 
+        /// <summary>
+        /// 캔버스 픽셀 좌표 → 유니티 월드 좌표 (WebToCanvas 역변환)
+        /// </summary>
+        public (double worldX, double worldZ) CanvasToWorld(double cx, double cy)
+        {
+            if (_mapData == null) return (0, 0);
+            double pad = 20;
+            double worldX = (cx - pad - _panOffsetX) / _scaleX + _mapData.OriginX;
+            double worldZ = (_canvasH - pad - cy - _panOffsetY) / _scaleY + _mapData.OriginY;
+            return (worldX, worldZ);
+        }
+
+        public bool HasMapData => _mapData != null;
+
         // JSON 파싱 후 렌더링
         public MapData? LoadFromJson(string json)
         {
@@ -201,6 +215,30 @@ namespace AirGuard.WPF.Map
                     _canvas.Children.Add(rect);
                 }
             }
+        }
+
+        // 맵 오브젝트 전체 제거 및 상태 초기화
+        public void Clear()
+        {
+            // map_obj(지형) 제거
+            var toRemove = _canvas.Children
+                .OfType<UIElement>()
+                .Where(e => e is Rectangle r && (string)(r.Tag ?? "") == "map_obj")
+                .ToList();
+            foreach (var el in toRemove)
+                _canvas.Children.Remove(el);
+
+            // 드론 마커/경로/레이블 등 나머지 동적 요소 전체 제거
+            var dynamicElements = _canvas.Children
+                .OfType<UIElement>()
+                .Where(e => e is not Rectangle r || (string)(r.Tag ?? "") != "map_obj")
+                .ToList();
+            foreach (var el in dynamicElements)
+                _canvas.Children.Remove(el);
+
+            _canvas.Background = new SolidColorBrush(Color.FromRgb(6, 10, 18));
+            _mapData = null;
+            ResetPan();
         }
     }
 }

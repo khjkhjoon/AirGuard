@@ -62,6 +62,78 @@ namespace AirGuard.WPF.ViewModels
         private string _searchQuery = "";
         private string _selectedFilter = "ALL";
 
+        // ===== 웨이포인트 미션 =====
+        public WaypointMissionViewModel WaypointMission { get; } = new();
+        // alias for code-behind convenience
+        public WaypointMissionViewModel Mission => WaypointMission;
+
+        // 미션 진행상황 이벤트 (vehicleId, currentWpIndex)
+        public event Action<string, int>? MissionProgressReceived;
+
+        /// <summary>유니티 월드 좌표 → 캔버스 좌표 변환</summary>
+        public (double cx, double cy) WorldToCanvas(double worldX, double worldZ)
+        {
+            if (_mapRenderer == null) return (0, 0);
+            return _mapRenderer.WorldToCanvas(worldX, worldZ);
+        }
+
+        /// <summary>캔버스 좌표 → 유니티 월드 좌표 변환</summary>
+        public (double worldX, double worldZ) CanvasToWorld(double canvasX, double canvasY)
+        {
+            if (_mapRenderer == null) return (0, 0);
+            return _mapRenderer.CanvasToWorld(canvasX, canvasY);
+        }
+
+        /// <summary>raw JSON 문자열 전송</summary>
+        public void SendRaw(string json) => _ = _tcpService.SendAsync(json);
+
+        /// <summary>
+        /// 캔버스 클릭 좌표를 유니티 월드 좌표로 변환 후 웨이포인트 추가
+        /// </summary>
+        public WaypointItem? AddWaypoint(double canvasX, double canvasY)
+        {
+            if (_mapRenderer == null || !_mapRenderer.HasMapData) return null;
+            var (worldX, worldZ) = _mapRenderer.CanvasToWorld(canvasX, canvasY);
+            return WaypointMission.AddWaypoint(worldX, worldZ, canvasX, canvasY);
+        }
+
+        /// <summary>
+        /// 선택된 드론에게 현재 웨이포인트 미션 전송
+        /// </summary>
+        public async Task SendMissionAsync()
+        {
+            if (_selectedVehicle == null)
+            {
+                AddLog("WARN", "미션 전송 실패: 드론을 먼저 선택하세요");
+                return;
+            }
+            if (WaypointMission.Waypoints.Count == 0)
+            {
+                AddLog("WARN", "미션 전송 실패: 웨이포인트가 없습니다");
+                return;
+            }
+
+            string json = WaypointMission.ToJson(_selectedVehicle.VehicleId);
+            await _tcpService.SendAsync(json);
+            WaypointMission.MissionStatus = "전송됨";
+            AddLog("INFO", $"미션 전송: {_selectedVehicle.Name} → WP {WaypointMission.Waypoints.Count}개");
+        }
+
+        /// <summary>
+        /// 유니티에서 수신한 미션 진행상황 업데이트
+        /// </summary>
+        public void UpdateMissionProgress(string vehicleId, int currentWpIndex)
+        {
+            if (_selectedVehicle?.VehicleId == vehicleId)
+                WaypointMission.SetCurrentWaypoint(currentWpIndex);
+            MissionProgressReceived?.Invoke(vehicleId, currentWpIndex);
+        }
+
+        private void AddLog(string level, string msg)
+        {
+            _pendingLogs.Enqueue((level, msg));
+        }
+
         // ===== 선택 =====
         private VehicleViewModel? _selectedVehicle;
 
@@ -295,7 +367,6 @@ namespace AirGuard.WPF.ViewModels
                     UpdateDroneMapPosition(vm);
                     if (_selectedVehicle?.VehicleId == data.VehicleId)
                     {
-                        vm.UpdateTelemetry(data);
                         TelemetryGraph.UpdateData(vm.TelemetryHistory);
                     }
                 }
@@ -375,6 +446,17 @@ namespace AirGuard.WPF.ViewModels
                     return;
                 }
 
+                // 미션 진행상황 처리
+                if (json.Contains("\"type\":\"mission_progress\""))
+                {
+                    var prog = JsonSerializer.Deserialize<MissionProgressData>(json,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    if (prog != null)
+                        Application.Current?.Dispatcher.BeginInvoke(() =>
+                            UpdateMissionProgress(prog.VehicleId, prog.CurrentWp));
+                    return;
+                }
+
                 var data = JsonSerializer.Deserialize<VehicleData>(json,
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 if (data == null) return;
@@ -451,6 +533,18 @@ namespace AirGuard.WPF.ViewModels
             AddLogInternal("WARN", "연결 해제됨");
             EndAllSessions();
             _isDisconnecting = false;
+
+            Vehicles.Clear();
+            _vehicleMap.Clear();
+            _latestData.Clear();
+            Alerts.Clear();
+            SelectedVehicle = null;
+            TelemetryGraph.Clear();
+            OnPropertyChanged(nameof(VehicleCountText));
+            OnPropertyChanged(nameof(HasAlerts));
+            OnPropertyChanged(nameof(AlertCount));
+            OnPropertyChanged(nameof(AlertBadgeVisibility));
+            ClearMap();
         }
 
         private void OnDisconnected()
@@ -461,6 +555,18 @@ namespace AirGuard.WPF.ViewModels
             {
                 IsConnected = false;
                 StatusText = "DISCONNECTED";
+
+                Vehicles.Clear();
+                _vehicleMap.Clear();
+                _latestData.Clear();
+                Alerts.Clear();
+                SelectedVehicle = null;
+                TelemetryGraph.Clear();
+                OnPropertyChanged(nameof(VehicleCountText));
+                OnPropertyChanged(nameof(HasAlerts));
+                OnPropertyChanged(nameof(AlertCount));
+                OnPropertyChanged(nameof(AlertBadgeVisibility));
+                ClearMap();
             });
             _pendingLogs.Enqueue(("WARN", "서버 연결 끊김"));
             _pendingAlerts.Enqueue(("WARN", "DISCONNECTED", "서버 연결이 끊어졌습니다", "SYSTEM"));
@@ -537,6 +643,15 @@ namespace AirGuard.WPF.ViewModels
         {
             if (_selectedVehicle == null) return null;
             return new System.Windows.Point(_selectedVehicle.MapX, _selectedVehicle.MapY);
+        }
+
+        public void ClearMap()
+        {
+            _mapRenderer?.Clear();
+            _mapOffsetX = 0;
+            _mapOffsetY = 0;
+            _mapScale = 1.0;
+            OnPropertyChanged(nameof(MapZoomText));
         }
 
         // ===== 필터 =====
@@ -699,6 +814,13 @@ namespace AirGuard.WPF.ViewModels
             _tcpService.Dispose();
             Playback.Dispose();
         }
+    }
+
+    public class MissionProgressData
+    {
+        public string Type { get; set; } = "";
+        public string VehicleId { get; set; } = "";
+        public int CurrentWp { get; set; }
     }
 
     public enum AlertSeverity { Info, Warning, Critical }

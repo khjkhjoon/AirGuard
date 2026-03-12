@@ -7,11 +7,11 @@ namespace AirGuard.WPF.Models
     /// </summary>
     public class PathRecord
     {
-        public DateTime Time { get; set; }
-        public double Latitude { get; set; }
-        public double Longitude { get; set; }
-        public double Altitude { get; set; }
-        public double Speed { get; set; }
-        public string Status { get; set; } = "Idle";
+        public DateTime Time { get; set; }     // 기록 시간
+        public double Latitude { get; set; }   // 위도
+        public double Longitude { get; set; }  // 경도
+        public double Altitude { get; set; }   // 고도
+        public double Speed { get; set; }      // 속도
+        public string Status { get; set; } = "Idle"; // 드론 상태
     }
 }

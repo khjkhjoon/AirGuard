@@ -24,7 +24,7 @@ namespace AirGuard.Controllers
         private void HandleStatusInput()
         {
             // E: 긴급 상황
-            if (Input.GetKeyDown(KeyCode.E))
+            if (Input.GetKeyDown(KeyCode.T))
             {
                 SetStatus(VehicleStatus.Emergency);
             }
