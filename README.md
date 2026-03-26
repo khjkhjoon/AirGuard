@@ -48,28 +48,6 @@ Unity를 사용하여 드론 환경 데이터를 시뮬레이션하고 서버로
 - [.NET 8.0 이상](https://dotnet.microsoft.com/) (AirGuard_Monitor, Server 실행에 필요)
 - [Unity](https://unity.com/) (Vehiclesimulator 실행에 필요)
 
-### 설치 및 실행
-
-1. **저장소 클론**
-   ```bash
-   git clone https://github.com/khjkhjoon/AirGuard.git
-   cd AirGuard
-   ```
-
-2. **서버 실행**
-   ```bash
-   cd Server
-   dotnet run
-   ```
-
-3. **시뮬레이터 실행**
-   - Unity에서 `Vehiclesimulator` 폴더를 프로젝트로 열고 Play
-
-4. **모니터링 클라이언트 실행**
-   ```bash
-   cd AirGuard_Monitor
-   dotnet run
-   ```
 
 ---
 
